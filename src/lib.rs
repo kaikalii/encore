@@ -5,7 +5,7 @@ This crate provides a terminal interface that runs alongside your app
 */
 
 use std::{
-    io::Read,
+    io::{stdout, Write},
     iter,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -15,8 +15,10 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-pub use clap;
 use clap::{App, ArgMatches, Result as ClapResult};
+use crossterm::{InputEvent, KeyEvent, Terminal, TerminalInput};
+
+pub use clap;
 
 /// Behavior for processing commands
 pub trait CommandProcessor: Sized {
@@ -59,7 +61,7 @@ where
     /// Create a new `Console` with the given state and processor builder
     pub fn new<B, F, P>(builder: B, process: F) -> Self
     where
-        B: Fn() -> P + Send + 'static,
+        B: FnOnce() -> P + Send + 'static,
         P: CommandProcessor,
         F: Fn(P::Parsed) -> Option<M> + Send + 'static,
     {
@@ -68,23 +70,49 @@ where
         let closed_clone = Arc::clone(&closed);
         let handle = thread::spawn(move || {
             let closed = closed_clone;
+            let (width, _) = Terminal::new().terminal_size();
+            let terminal = TerminalInput::new();
+            let reader = terminal.read_sync();
             let mut processor = builder();
-            loop {
+            let mut input = String::new();
+            for event in reader {
                 if closed.load(Ordering::Relaxed) {
                     return;
                 }
-                let input: String = std::io::stdin()
-                    .bytes()
-                    .filter_map(Result::ok)
-                    .take_while(|&c| c != b'\n')
-                    .map(|b| b as char)
-                    .collect();
-                let parsed = processor.parse(input.trim());
-                if let Some(message) = process(parsed) {
-                    let _ = send.send(message);
-                } else {
-                    closed.store(true, Ordering::Relaxed);
-                    return;
+                if let InputEvent::Keyboard(key_event) = event {
+                    match key_event {
+                        KeyEvent::Backspace => {
+                            if input.pop().is_some() {
+                                print!(
+                                    "\r{}",
+                                    (0..(width as usize - input.len()))
+                                        .map(|_| ' ')
+                                        .collect::<String>()
+                                );
+                                print!("\r{}", input);
+                                let _ = stdout().flush();
+                            }
+                        }
+                        KeyEvent::Char(c) => {
+                            print!("{}", c);
+                            let _ = stdout().flush();
+                            if c == '\n' {
+                                // Submit
+                                let parsed = processor.parse(input.trim());
+                                input.clear();
+                                if let Some(message) = process(parsed) {
+                                    let _ = send.send(message);
+                                } else {
+                                    closed.store(true, Ordering::Relaxed);
+                                    return;
+                                }
+                            } else {
+                                // Add character
+                                input.push(c);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         });
