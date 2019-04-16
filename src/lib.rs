@@ -75,6 +75,31 @@ where
             let reader = terminal.read_sync();
             let mut processor = builder();
             let mut input = String::new();
+            let mut history: Vec<String> = Vec::new();
+            let mut curr = None;
+            macro_rules! flush {
+                () => {
+                    let _ = stdout().flush();
+                };
+            }
+            macro_rules! clear_line {
+                () => {
+                    print!(
+                        "\r{}",
+                        (0..(width as usize - input.len()))
+                            .map(|_| ' ')
+                            .collect::<String>()
+                    );
+                };
+            }
+            macro_rules! set_line {
+                ($line:expr) => {
+                    clear_line!();
+                    input = $line;
+                    print!("\r{}", input);
+                    flush!();
+                };
+            }
             for event in reader {
                 if closed.load(Ordering::Relaxed) {
                     return;
@@ -83,23 +108,42 @@ where
                     match key_event {
                         KeyEvent::Backspace => {
                             if input.pop().is_some() {
-                                print!(
-                                    "\r{}",
-                                    (0..(width as usize - input.len()))
-                                        .map(|_| ' ')
-                                        .collect::<String>()
-                                );
+                                clear_line!();
                                 print!("\r{}", input);
-                                let _ = stdout().flush();
+                                flush!();
+                            }
+                        }
+                        KeyEvent::Up => {
+                            if curr.is_none() {
+                                curr = Some(history.len());
+                            }
+                            if let Some(ref mut curr) = curr {
+                                if *curr > 0 {
+                                    *curr -= 1;
+                                }
+                                set_line!(history[*curr].clone());
+                            }
+                        }
+                        KeyEvent::Down => {
+                            if let Some(c) = curr {
+                                if c < history.len() - 1 {
+                                    set_line!(history[c + 1].clone());
+                                    curr = Some(c + 1);
+                                } else {
+                                    set_line!(String::new());
+                                    curr = None;
+                                }
                             }
                         }
                         KeyEvent::Char(c) => {
                             print!("{}", c);
-                            let _ = stdout().flush();
+                            flush!();
                             if c == '\n' {
                                 // Submit
                                 let parsed = processor.parse(input.trim());
+                                history.push(input.trim().to_string());
                                 input.clear();
+                                curr = None;
                                 if let Some(message) = process(parsed) {
                                     let _ = send.send(message);
                                 } else {
