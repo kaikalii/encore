@@ -9,6 +9,8 @@ fn main() {
                 .required(true),
         )
     };
+
+    // Create the console
     let console = Console::new(app, |matches| match matches {
         Ok(matches) => {
             let input = matches.value_of("INPUT").unwrap();
@@ -21,6 +23,7 @@ fn main() {
         Err(e) => Some(format!("{}", e)),
     });
 
+    // Poll and print the output
     while console.is_open() {
         if let Some(output) = console.poll() {
             println!("{}", output);

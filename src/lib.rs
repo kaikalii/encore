@@ -16,7 +16,6 @@ use std::{
 };
 
 use clap::{App, ArgMatches, Result as ClapResult};
-use colored::Colorize;
 use crossterm::{InputEvent, KeyEvent, Terminal, TerminalInput};
 
 pub use clap;
@@ -98,15 +97,8 @@ where
                 ($line:expr) => {
                     clear_line!();
                     input = $line;
-                    print!(
-                        "\r{}{}",
-                        &input[..cursor],
-                        if let Some(c) = input.chars().last() {
-                            c.to_string().black()
-                        } else {
-                            Default::default()
-                        }
-                    );
+                    print!("\r{}", input);
+                    print!("\r{}", &input[..cursor.min(input.len())]);
                     flush!();
                 };
             }
@@ -117,11 +109,28 @@ where
                 if let InputEvent::Keyboard(key_event) = event {
                     match key_event {
                         KeyEvent::Backspace => {
-                            if input.pop().is_some() {
-                                clear_line!();
+                            let reprint = if cursor >= input.len() {
+                                input.pop().is_some()
+                            } else if !input.is_empty() && cursor > 0 {
+                                input.remove(cursor - 1);
+                                true
+                            } else {
+                                false
+                            };
+                            if reprint {
                                 cursor -= 1;
-                                print!("\r{}", input);
-                                flush!();
+                                set_line!(input);
+                            }
+                        }
+                        KeyEvent::Delete => {
+                            let reprint = if cursor < input.len() {
+                                input.remove(cursor);
+                                true
+                            } else {
+                                false
+                            };
+                            if reprint {
+                                set_line!(input);
                             }
                         }
                         KeyEvent::Up => {
@@ -150,12 +159,26 @@ where
                                 set_line!(new_input);
                             }
                         }
+                        KeyEvent::Left => {
+                            if cursor > 0 {
+                                cursor -= 1;
+                                set_line!(input);
+                            }
+                        }
+                        KeyEvent::Right => {
+                            if cursor < input.len() {
+                                cursor += 1;
+                                set_line!(input);
+                            }
+                        }
                         KeyEvent::Char(c) => {
                             if c == '\n' {
+                                println!();
                                 // Submit
                                 let parsed = processor.parse(input.trim());
                                 history.push(input.trim().to_string());
                                 input.clear();
+                                cursor = 0;
                                 curr = None;
                                 if let Some(message) = process(parsed) {
                                     let _ = send.send(message);
@@ -165,7 +188,7 @@ where
                                 }
                             } else {
                                 // Add character
-                                input.push(c);
+                                input.insert(cursor, c);
                                 cursor += 1;
                                 set_line!(input);
                             }
