@@ -16,6 +16,7 @@ use std::{
 };
 
 use clap::{App, ArgMatches, Result as ClapResult};
+use colored::Colorize;
 use crossterm::{InputEvent, KeyEvent, Terminal, TerminalInput};
 
 pub use clap;
@@ -77,6 +78,7 @@ where
             let mut input = String::new();
             let mut history: Vec<String> = Vec::new();
             let mut curr = None;
+            let mut cursor = 0;
             macro_rules! flush {
                 () => {
                     let _ = stdout().flush();
@@ -96,7 +98,15 @@ where
                 ($line:expr) => {
                     clear_line!();
                     input = $line;
-                    print!("\r{}", input);
+                    print!(
+                        "\r{}{}",
+                        &input[..cursor],
+                        if let Some(c) = input.chars().last() {
+                            c.to_string().black()
+                        } else {
+                            Default::default()
+                        }
+                    );
                     flush!();
                 };
             }
@@ -109,6 +119,7 @@ where
                         KeyEvent::Backspace => {
                             if input.pop().is_some() {
                                 clear_line!();
+                                cursor -= 1;
                                 print!("\r{}", input);
                                 flush!();
                             }
@@ -121,23 +132,25 @@ where
                                 if *curr > 0 {
                                     *curr -= 1;
                                 }
-                                set_line!(history[*curr].clone());
+                                let new_input = history[*curr].clone();
+                                cursor = new_input.len();
+                                set_line!(new_input);
                             }
                         }
                         KeyEvent::Down => {
                             if let Some(c) = curr {
-                                if c < history.len() - 1 {
-                                    set_line!(history[c + 1].clone());
+                                let new_input = if c < history.len() - 1 {
                                     curr = Some(c + 1);
+                                    history[c + 1].clone()
                                 } else {
-                                    set_line!(String::new());
                                     curr = None;
-                                }
+                                    String::new()
+                                };
+                                cursor = new_input.len();
+                                set_line!(new_input);
                             }
                         }
                         KeyEvent::Char(c) => {
-                            print!("{}", c);
-                            flush!();
                             if c == '\n' {
                                 // Submit
                                 let parsed = processor.parse(input.trim());
@@ -153,6 +166,8 @@ where
                             } else {
                                 // Add character
                                 input.push(c);
+                                cursor += 1;
+                                set_line!(input);
                             }
                         }
                         _ => {}
